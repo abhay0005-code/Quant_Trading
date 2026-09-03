@@ -131,6 +131,17 @@ def _broker_label(broker: str, sandbox: bool, client=None) -> str:
     return "SANDBOX (yfinance)" if sandbox else "DHAN LIVE"
 
 
+def update_broker_visibility(broker) -> list:
+    """Show only the credential group matching the selected broker."""
+    b = (broker or "dhan").strip().lower()
+    return [
+        gr.Group(visible=(b == "dhan")),
+        gr.Group(visible=(b == "zerodha")),
+        gr.Group(visible=(b == "binance")),
+        gr.Group(visible=(b == "tradingview")),
+    ]
+
+
 def check_connection(broker, client_id, access_token, sandbox,
                      kite_key, kite_token, binance_key, binance_secret,
                      binance_testnet, tv_webhook, tv_symmap) -> str:
@@ -405,19 +416,22 @@ with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
                                    info="NSE/BSE/MCX for Dhan·Zerodha · USDT pair (e.g. BTCUSDT) for Binance")
 
             with gr.Accordion("Broker credentials", open=True):
-                with gr.Group():
+                dhan_group = gr.Group(visible=(_DEFAULT_BROKER == "dhan"))
+                with dhan_group:
                     gr.Markdown("**Dhan**")
                     with gr.Row():
                         client_id = gr.Textbox(label="Dhan Client ID", value="")
                         access_token = gr.Textbox(label="Dhan Access Token",
                                                   value="", type="password")
-                with gr.Group():
+                zerodha_group = gr.Group(visible=(_DEFAULT_BROKER == "zerodha"))
+                with zerodha_group:
                     gr.Markdown("**Zerodha (Kite Connect)**")
                     with gr.Row():
                         kite_key = gr.Textbox(label="Zerodha API Key", value="")
                         kite_token = gr.Textbox(label="Zerodha Access Token",
                                                 value="", type="password")
-                with gr.Group():
+                binance_group = gr.Group(visible=(_DEFAULT_BROKER == "binance"))
+                with binance_group:
                     gr.Markdown("**Binance**")
                     with gr.Row():
                         binance_key = gr.Textbox(label="Binance API Key", value="")
@@ -425,7 +439,8 @@ with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
                                                     value="", type="password")
                     binance_testnet = gr.Checkbox(label="Binance testnet (paper)",
                                                   value=True)
-                with gr.Group():
+                tv_group = gr.Group(visible=(_DEFAULT_BROKER == "tradingview"))
+                with tv_group:
                     gr.Markdown("**TradingView**")
                     tv_webhook = gr.Textbox(
                         label="Webhook URL (order forward)",
@@ -583,6 +598,11 @@ with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
         check_connection,
         inputs=_broker_inputs,
         outputs=conn_html)
+    # Show only the selected broker's credentials.
+    broker.change(
+        update_broker_visibility,
+        inputs=broker,
+        outputs=[dhan_group, zerodha_group, binance_group, tv_group])
 
 if __name__ == "__main__":
     demo.launch(
