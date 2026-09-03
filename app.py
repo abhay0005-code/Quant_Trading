@@ -531,6 +531,10 @@ with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
     _run_inputs = (_broker_inputs
                    + [equity, risk_pct, max_loss, rr, train_window, engine,
                       llm_provider, llm_models])
+    # Credential-only inputs for check_connection (which ignores symbol/exchange).
+    _cred_inputs = [broker, client_id, access_token, sandbox,
+                    kite_key, kite_token, binance_key, binance_secret,
+                    binance_testnet, tv_webhook, tv_symmap]
 
     run_btn.click(
         run_pipeline,
@@ -580,23 +584,21 @@ with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
     # Keep the connection status pill (green = connected, red = not) in sync.
     demo.load(
         check_connection,
-        inputs=_broker_inputs,
+        inputs=_cred_inputs,
         outputs=conn_html).then(
         check_tab_llm_connection,
         inputs=[tab_llm_provider, tab_llm_models],
         outputs=tab_llm_status)
-    for _inp in (_broker_inputs
-                 + [broker, kite_key, kite_token, binance_key, binance_secret,
-                    binance_testnet, tv_webhook, tv_symmap]):
+    for _inp in _cred_inputs:
         _inp.change(
             check_connection,
-            inputs=_broker_inputs,
+            inputs=_cred_inputs,
             outputs=conn_html)
 
     # Refresh connection status when the broker selection changes too.
     broker.change(
         check_connection,
-        inputs=_broker_inputs,
+        inputs=_cred_inputs,
         outputs=conn_html)
     # Show only the selected broker's credentials.
     broker.change(
