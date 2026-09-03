@@ -1,11 +1,11 @@
 # 📈 Quant Trading System
 
-A Gradio-powered algorithmic trading pipeline for Indian markets. It ingests **5-minute OHLCV** data from the **Dhan API**, engineers a rich set of technical features, runs a time-series engine (**ARIMA + GARCH + Kalman filter**), trains a gradient-boosting classifier (**XGBoost / LightGBM**) for next-bar direction, blends everything into a composite **signal score**, and lets a **risk engine** produce an actionable trade plan (entry / stop-loss / target / position size).
+A Gradio-powered algorithmic trading pipeline. It ingests **5-minute OHLCV** data from **multiple brokers — Dhan, Zerodha, Binance, and TradingView** — engineers a rich set of technical features, runs a time-series engine (**ARIMA + GARCH + Kalman filter**), trains a gradient-boosting classifier (**XGBoost / LightGBM**) for next-bar direction, blends everything into a composite **signal score**, and lets a **risk engine** produce an actionable trade plan (entry / stop-loss / target / position size).
 
-Sandbox mode provides a seamless **yfinance** fallback so the full pipeline runs end-to-end with a single `Run Pipeline ▶` click — no Dhan credentials required.
+Sandbox mode provides a seamless **yfinance** fallback so the full pipeline runs end-to-end with a single `Run Pipeline ▶` click — no broker credentials required.
 
 ```
-Dhan 5-min OHLCV
+Broker 5-min OHLCV (Dhan · Zerodha · Binance · TradingView)
    │
    ▼
 Feature Engineering (EMA169/ATR/VWAP/RSI/Vol-ratio/Swings/BOS-CHoCH/Patterns/Momentum)
@@ -23,15 +23,20 @@ Signal Score (−1 to +1)
 Risk Engine (entry / SL / target / position size, R:R & max-loss capped)
    │
    ▼
-(Dhan order — sandbox is a no-op)
+(broker order — sandbox is a no-op)
 ```
 
 ---
 
 ## ✨ Features
 
-- **Gradio UI** — symbol / exchange / risk / ML-engine controls plus live status, trade plan, price chart, indicator panel and recent data tables.
-- **Connection status pill** — a green **● CONNECTED** / red **● NOT CONNECTED** indicator next to the credentials that updates live as you toggle sandbox mode or enter Dhan credentials.
+- **Gradio UI** — **broker selector** (Dhan / Zerodha / Binance / TradingView), symbol / exchange / risk / ML-engine controls plus live status, trade plan, price chart, indicator panel and recent data tables.
+- **Connection status pill** — a green **● CONNECTED** / red **● NOT CONNECTED** indicator next to the credentials that updates live as you switch broker or toggle sandbox mode.
+- **Multi-broker support** — a common `BrokerClient` interface in `broker_base.py`:
+  - **Dhan** (`dhan_client.py`) — Indian equities/F&O via DhanHQ
+  - **Zerodha** (`zerodha_client.py`) — Indian equities/F&O/commodities via Kite Connect
+  - **Binance** (`binance_client.py`) — crypto spot via python-binance (testnet supported)
+  - **TradingView** (`tradingview_client.py`) — charting-platform alerts → webhook order forwarding (data via yfinance)
 - **Feature engineering** (`features.py`):
   - EMA(169) + slope · ATR / volatility · session-anchored VWAP · RSI · volume ratio
   - Swing high/low, **BOS / CHoCH** market-structure flags
@@ -54,8 +59,12 @@ Risk Engine (entry / SL / target / position size, R:R & max-loss capped)
 | File | Purpose |
 |---|---|
 | `app.py` | Gradio UI and pipeline orchestration |
-| `config.py` | `Config` dataclass (credentials, risk, ML params) + validation |
+| `config.py` | `Config` dataclass (broker + credentials, risk, ML params) + validation |
+| `broker_base.py` | Common `BrokerClient` interface, registry + factory |
 | `dhan_client.py` | Dhan API client (data, quotes, orders) + symbol resolution + yfinance fallback |
+| `zerodha_client.py` | Zerodha (Kite Connect) client — data + orders |
+| `binance_client.py` | Binance (python-binance) client — crypto data + orders |
+| `tradingview_client.py` | TradingView webhook-forward client — alert orders + yfinance data |
 | `features.py` | Technical feature engineering |
 | `ts_engine.py` | ARIMA / GARCH / Kalman time-series engine |
 | `ml_engine.py` | XGBoost / LightGBM direction classifier |
@@ -93,14 +102,27 @@ python app.py
 
 Open the printed Gradio URL in your browser.
 
-By default **Sandbox mode** is enabled, so no Dhan credentials are needed — the pipeline fetches live 5-minute data via **yfinance** (`RELIANCE.NS`, `TCS.NS`, etc.).
+By default **Sandbox mode** is enabled, so no broker credentials are needed — the pipeline fetches live 5-minute data via **yfinance** (`RELIANCE.NS`, `TCS.NS`, etc.).
 
-### Go live with Dhan
+### Go live with a broker
 
-1. Uncheck **Sandbox mode** in the UI.
-2. Enter your **Dhan Client ID** and **Access Token** (from [Dhan Console](https://console.dhan.co/)).
-3. Adjust risk settings (account equity, % risk per trade, max loss, reward:risk).
-4. Click **Run Pipeline ▶**.
+1. Pick a **Broker** from the dropdown (Dhan / Zerodha / Binance / TradingView).
+2. Fill in that broker's credentials under **Broker credentials**.
+3. Uncheck **Sandbox / demo mode**.
+4. Adjust risk settings (account equity, % risk per trade, max loss, reward:risk).
+5. Click **Run Pipeline ▶**.
+
+#### Dhan
+Enter **Client ID** + **Access Token** (from [Dhan Console](https://console.dhan.co/)).
+
+#### Zerodha (Kite Connect)
+Enter your **API key** and **Access token**. Generate them at the [Zerodha developer dashboard](https://developers.kite.trade/) and exchange the `request_token` for an access token after login. Symbols resolve automatically (`NSE:RELIANCE`).
+
+#### Binance
+Enter **API Key** + **API Secret** (create at [Binance API management](https://www.binance.com/en/my/settings/api-management)). Leave **testnet** checked for paper trading. Symbols use base+quote, e.g. `BTCUSDT`, `ETH/USDT`, or `BTC:USDT`.
+
+#### TradingView
+TradingView is a charting platform, not a REST broker. This integration forwards **alert payloads** to your own **webhook URL** when the pipeline generates a signal; set `TV_WEBHOOK_URL` in `.env` or the UI. Data for symbols is fetched via yfinance; use `TV_SYMBOL_MAP` (e.g. `NIFTY:^NSEI,BTCUSDT:BTC-USD`) to map TradingView symbols to yfinance tickers. Without a webhook URL, signals are returned as a **pending alert** (no order sent).
 
 ---
 
@@ -160,7 +182,7 @@ See `requirements.txt`. Highlights:
 - **Data / ML:** `pandas`, `numpy`, `scipy`, `scikit-learn`
 - **Time-series:** `statsmodels`, `arch`, `pykalman`
 - **Gradient boosting:** `xgboost`, `lightgbm`
-- **Dhan API:** `dhanhq`
+- **Brokers:** `dhanhq`, `kiteconnect`, `python-binance`
 - **Visualisation / UI:** `matplotlib`, `gradio`
 - **Data fallback:** `yfinance`
 

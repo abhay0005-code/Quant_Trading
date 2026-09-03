@@ -16,6 +16,12 @@ lightgbm>=4.0
 # Dhan API
 dhanhq>=1.0
 
+# Zerodha (Kite Connect) API
+kiteconnect>=4.0
+
+# Binance API
+python-binance>=1.0
+
 # Visualization
 matplotlib>=3.7
 

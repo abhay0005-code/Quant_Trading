@@ -21,6 +21,7 @@ import gradio as gr
 from gradio import HTML
 
 from config import Config
+from broker_base import create_broker, BrokerClient
 from dhan_client import DhanDataClient
 from features import add_features
 from ts_engine import run_time_series_engine
@@ -39,6 +40,11 @@ LLM_PROVIDERS = ["none", "ollama", "huggingface", "openrouter", "openai", "anthr
 _DEFAULT_LLM = os.environ.get("LLM_PROVIDER", "none").strip().lower()
 if _DEFAULT_LLM not in LLM_PROVIDERS:
     _DEFAULT_LLM = "none"
+
+BROKERS = ["dhan", "zerodha", "binance", "tradingview"]
+_DEFAULT_BROKER = os.environ.get("BROKER", "dhan").strip().lower()
+if _DEFAULT_BROKER not in BROKERS:
+    _DEFAULT_BROKER = "dhan"
 
 # Stores the latest pipeline context so the LLM tab can re-analyse on demand.
 _latest_llm_ctx: dict = {}
@@ -76,24 +82,67 @@ INDICATOR_OPTIONS = [
 ]
 
 
-def _build_config(symbol, exchange, client_id, access_token, sandbox,
+def _build_config(broker, symbol, exchange, client_id, access_token, sandbox,
+                  kite_key, kite_token, binance_key, binance_secret,
+                  binance_testnet, tv_webhook, tv_symmap,
                   equity, risk_pct, max_loss, rr, train_window):
     return Config(
+        broker=(broker or "dhan").strip().lower(),
         symbol=str(symbol).strip().upper(), exchange=exchange,
         client_id=client_id.strip(), access_token=access_token.strip(),
-        sandbox=bool(sandbox), account_equity=float(equity),
+        sandbox=bool(sandbox),
+        kite_api_key=kite_key.strip(), kite_access_token=kite_token.strip(),
+        binance_api_key=binance_key.strip(),
+        binance_api_secret=binance_secret.strip(),
+        binance_testnet=bool(binance_testnet),
+        tv_webhook_url=tv_webhook.strip(), tv_symbol_map=tv_symmap.strip(),
+        account_equity=float(equity),
         risk_per_trade=float(risk_pct) / 100.0, max_risk_per_trade=float(max_loss),
         rr_ratio=float(rr), train_window=int(train_window))
 
 
-def check_connection(client_id, access_token, sandbox) -> str:
-    """Return an HTML status pill: green dot when the Dhan broker is
-    connected, red otherwise."""
+def _client_for(cfg: Config) -> BrokerClient:
+    """Build the correct broker client for the config."""
+    if cfg.broker == "zerodha":
+        return create_broker("zerodha", api_key=cfg.kite_api_key,
+                             access_token=cfg.kite_access_token,
+                             sandbox=cfg.sandbox)
+    if cfg.broker == "binance":
+        return create_broker("binance", api_key=cfg.binance_api_key,
+                             api_secret=cfg.binance_api_secret,
+                             testnet=cfg.binance_testnet)
+    if cfg.broker == "tradingview":
+        return create_broker("tradingview", webhook_url=cfg.tv_webhook_url,
+                             symbol_map=cfg.tv_symbol_map, sandbox=True)
+    # Default: Dhan
+    return DhanDataClient(cfg.client_id, cfg.access_token, sandbox=cfg.sandbox)
+
+
+def _broker_label(broker: str, sandbox: bool, client=None) -> str:
+    """Human-readable status line for the active broker."""
+    b = (broker or "dhan").strip().lower()
+    if b == "binance":
+        mode = "TESTNET" if (client is None or client.testnet) else "LIVE"
+        return f"BINANCE {mode}"
+    if b == "tradingview":
+        return "TRADINGVIEW"
+    if b == "zerodha":
+        return "ZERODHA LIVE" if not sandbox else "ZERODHA (SANDBOX/demo)"
+    return "SANDBOX (yfinance)" if sandbox else "DHAN LIVE"
+
+
+def check_connection(broker, client_id, access_token, sandbox,
+                     kite_key, kite_token, binance_key, binance_secret,
+                     binance_testnet, tv_webhook, tv_symmap) -> str:
+    """Return an HTML status pill for the active broker connection."""
     try:
-        client = DhanDataClient(str(client_id).strip(),
-                                str(access_token).strip(), sandbox=bool(sandbox))
+        cfg = _build_config(broker, "RELIANCE", "NSE", client_id, access_token,
+                            sandbox, kite_key, kite_token, binance_key,
+                            binance_secret, binance_testnet, tv_webhook,
+                            tv_symmap, 100000, 1.0, 5000, 2.0, 250)
+        client = _client_for(cfg)
         ok = client.connect()
-        mode = "SANDBOX (yfinance)" if client.sandbox else "DHAN LIVE"
+        mode = _broker_label(cfg.broker, cfg.sandbox, client)
         color = "green" if ok else "red"
         verb = "CONNECTED" if ok else "NOT CONNECTED"
         return f'<div style="display:inline-block;padding:4px 10px;border-radius:12px;' \
@@ -199,23 +248,29 @@ def run_tab_llm_analysis(provider: str, model: str, strategies: list, indicators
     return f"### 🤖 LLM Analysis\n**Provider:** `{provider}` · **Model:** `{model}`\n\n{result}"
 
 
-def run_pipeline(symbol, exchange, client_id, access_token, sandbox,
+def run_pipeline(broker, symbol, exchange, client_id, access_token, sandbox,
+                 kite_key, kite_token, binance_key, binance_secret,
+                 binance_testnet, tv_webhook, tv_symmap,
                  equity, risk_pct, max_loss, rr, train_window, engine,
                  llm_provider, llm_models):
     """Full pipeline. Returns (status_md, trade_md, chart, indicators,
     data_df, llm_md)."""
     try:
-        cfg = _build_config(symbol, exchange, client_id, access_token, sandbox,
-                            equity, risk_pct, max_loss, rr, train_window)
+        cfg = _build_config(broker, symbol, exchange, client_id, access_token,
+                            sandbox, kite_key, kite_token, binance_key,
+                            binance_secret, binance_testnet, tv_webhook,
+                            tv_symmap, equity, risk_pct, max_loss, rr,
+                            train_window)
         errors = cfg.validate()
         if errors:
             raise ValueError("; ".join(errors))
 
-        client = DhanDataClient(cfg.client_id, cfg.access_token, sandbox=cfg.sandbox)
+        client = _client_for(cfg)
         client.connect()
         df = client.fetch_intraday(
-            cfg.symbol, cfg.exchange, cfg.security_id, cfg.instrument_type,
-            days=cfg.lookback_days, interval_minutes=5)
+            cfg.symbol, cfg.exchange, days=cfg.lookback_days,
+            interval_minutes=5, security_id=cfg.security_id,
+            instrument_type=cfg.instrument_type)
 
         # 1. Feature engineering
         df = add_features(df, cfg)
@@ -239,7 +294,7 @@ def run_pipeline(symbol, exchange, client_id, access_token, sandbox,
 
         status = (
             f"### {cfg.symbol} · {cfg.exchange} · "
-            f"{'SANDBOX (yfinance)' if client.sandbox else 'LIVE DHAN'}\n"
+            f"{_broker_label(cfg.broker, cfg.sandbox, client)}\n"
             "| Component | Result |\n|---|---|\n"
             f"| Bars loaded | {len(df)} |\n"
             f"| ARIMA next-return | {ts['arima_return']:+.5f} |\n"
@@ -333,23 +388,52 @@ def run_pipeline(symbol, exchange, client_id, access_token, sandbox,
         return f"**Error:** {e}", "—", None, None, "—", "—"
 
 
-with gr.Blocks(title="Quant Trading — Dhan 5-min Pipeline") as demo:
+with gr.Blocks(title="Quant Trading — Multi-Broker 5-min Pipeline") as demo:
     gr.Markdown(
         "# 📈 Quant Trading System\n"
-        "Dhan 5-min OHLCV → Features (EMA169/ATR/VWAP/RSI/Vol ratio/Swings/"
-        "BOS-CHoCH/Patterns/Momentum) → ARIMA + GARCH + Kalman → "
-        "XGBoost/LightGBM P(UP) → Signal Score → Risk Engine → Dhan order")
+        "Multi-broker 5-min OHLCV (Dhan · Zerodha · Binance · TradingView) → "
+        "Features (EMA169/ATR/VWAP/RSI/Vol ratio/Swings/BOS-CHoCH/Patterns/"
+        "Momentum) → ARIMA + GARCH + Kalman → XGBoost/LightGBM P(UP) → "
+        "Signal Score → Risk Engine → broker order")
 
     with gr.Row():
         with gr.Column(scale=1):
+            broker = gr.Dropdown(BROKERS, value=_DEFAULT_BROKER, label="Broker")
             symbol = gr.Textbox(label="Symbol", value="RELIANCE")
-            exchange = gr.Dropdown(["NSE", "BSE", "NSE_FNO", "MCX"],
-                                   value="NSE", label="Exchange")
-            with gr.Row():
-                client_id = gr.Textbox(label="Dhan Client ID", value="")
-                access_token = gr.Textbox(label="Dhan Access Token", value="",
-                                          type="password")
-            sandbox = gr.Checkbox(label="Sandbox mode (use yfinance data)",
+            exchange = gr.Dropdown(["NSE", "BSE", "NSE_FNO", "MCX", "USDT"],
+                                   value="NSE", label="Exchange",
+                                   info="NSE/BSE/MCX for Dhan·Zerodha · USDT pair (e.g. BTCUSDT) for Binance")
+
+            with gr.Accordion("Broker credentials", open=True):
+                with gr.Group():
+                    gr.Markdown("**Dhan**")
+                    with gr.Row():
+                        client_id = gr.Textbox(label="Dhan Client ID", value="")
+                        access_token = gr.Textbox(label="Dhan Access Token",
+                                                  value="", type="password")
+                with gr.Group():
+                    gr.Markdown("**Zerodha (Kite Connect)**")
+                    with gr.Row():
+                        kite_key = gr.Textbox(label="Zerodha API Key", value="")
+                        kite_token = gr.Textbox(label="Zerodha Access Token",
+                                                value="", type="password")
+                with gr.Group():
+                    gr.Markdown("**Binance**")
+                    with gr.Row():
+                        binance_key = gr.Textbox(label="Binance API Key", value="")
+                        binance_secret = gr.Textbox(label="Binance API Secret",
+                                                    value="", type="password")
+                    binance_testnet = gr.Checkbox(label="Binance testnet (paper)",
+                                                  value=True)
+                with gr.Group():
+                    gr.Markdown("**TradingView**")
+                    tv_webhook = gr.Textbox(
+                        label="Webhook URL (order forward)",
+                        value=os.environ.get("TV_WEBHOOK_URL", ""))
+                    tv_symmap = gr.Textbox(
+                        label="Symbol map (TV:YF, e.g. NIFTY:^NSEI)",
+                        value=os.environ.get("TV_SYMBOL_MAP", ""))
+            sandbox = gr.Checkbox(label="Sandbox / demo mode (use yfinance data)",
                                   value=True)
             conn_html = gr.HTML(
                 '<div style="display:inline-block;padding:4px 10px;border-radius:12px;'
@@ -426,11 +510,16 @@ with gr.Blocks(title="Quant Trading — Dhan 5-min Pipeline") as demo:
                 tab_run_btn = gr.Button("Run LLM Analysis ▶", variant="primary")
                 llm_md = gr.Markdown("_Select provider, model, strategies, and indicators, then click **Run LLM Analysis**._")
 
+    _broker_inputs = [broker, symbol, exchange, client_id, access_token,
+                      sandbox, kite_key, kite_token, binance_key, binance_secret,
+                      binance_testnet, tv_webhook, tv_symmap]
+    _run_inputs = (_broker_inputs
+                   + [equity, risk_pct, max_loss, rr, train_window, engine,
+                      llm_provider, llm_models])
+
     run_btn.click(
         run_pipeline,
-        inputs=[symbol, exchange, client_id, access_token, sandbox,
-                equity, risk_pct, max_loss, rr, train_window, engine,
-                llm_provider, llm_models],
+        inputs=_run_inputs,
         outputs=[status_md, trade_md, chart, panel, data_md, llm_md])
 
     # Auto-run: enable/disable the 5-minute timer when checkbox changes.
@@ -442,9 +531,7 @@ with gr.Blocks(title="Quant Trading — Dhan 5-min Pipeline") as demo:
     # Timer tick triggers the same pipeline run.
     auto_timer.tick(
         run_pipeline,
-        inputs=[symbol, exchange, client_id, access_token, sandbox,
-                equity, risk_pct, max_loss, rr, train_window, engine,
-                llm_provider, llm_models],
+        inputs=_run_inputs,
         outputs=[status_md, trade_md, chart, panel, data_md, llm_md])
 
     # Show the models relevant to the selected LLM provider.
@@ -478,16 +565,24 @@ with gr.Blocks(title="Quant Trading — Dhan 5-min Pipeline") as demo:
     # Keep the connection status pill (green = connected, red = not) in sync.
     demo.load(
         check_connection,
-        inputs=[client_id, access_token, sandbox],
+        inputs=_broker_inputs,
         outputs=conn_html).then(
         check_tab_llm_connection,
         inputs=[tab_llm_provider, tab_llm_models],
         outputs=tab_llm_status)
-    for _inp in (client_id, access_token, sandbox):
+    for _inp in (_broker_inputs
+                 + [broker, kite_key, kite_token, binance_key, binance_secret,
+                    binance_testnet, tv_webhook, tv_symmap]):
         _inp.change(
             check_connection,
-            inputs=[client_id, access_token, sandbox],
+            inputs=_broker_inputs,
             outputs=conn_html)
+
+    # Refresh connection status when the broker selection changes too.
+    broker.change(
+        check_connection,
+        inputs=_broker_inputs,
+        outputs=conn_html)
 
 if __name__ == "__main__":
     demo.launch(
