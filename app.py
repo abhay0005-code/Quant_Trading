@@ -9,6 +9,14 @@ from __future__ import annotations
 import logging
 import os
 
+# Opt out of Gradio/HuggingFace telemetry BEFORE importing gradio, otherwise
+# the analytics call at import/startup can hang on restricted hosts (e.g.
+# Railway) and block the server from starting.
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED", "False")
+os.environ.setdefault("GRADIO_ANALYTICS_ENABLED_LOCAL", "False")
+os.environ.setdefault("HF_HUB_DISABLE_TELEMETRY", "1")
+os.environ.setdefault("HF_HUB_OFFLINE", "0")
+
 import gradio as gr
 from gradio import HTML
 
@@ -482,6 +490,11 @@ with gr.Blocks(title="Quant Trading — Dhan 5-min Pipeline") as demo:
             outputs=conn_html)
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0",
-                server_port=int(os.environ.get("PORT", 7860)))
+    demo.launch(
+        server_name="0.0.0.0",
+        server_port=int(os.environ.get("PORT", 7860)),
+        quiet=True,
+        show_error=True,
+        inbrowser=False,
+    )
 

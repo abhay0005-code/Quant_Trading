@@ -17,7 +17,15 @@ ENV PIP_DEFAULT_TIMEOUT=300 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    # Bound BLAS/OpenMP threads to 1 CPU to avoid thread oversubscription,
+    # which multiplies per-thread stack allocations and OOMs small Railway
+    # memory limits during import. Also speeds up startup.
+    OPENBLAS_NUM_THREADS=1 \
+    OMP_NUM_THREADS=1 \
+    MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 \
+    XGBOOST_NUM_THREADS=1
 
 COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --upgrade pip setuptools wheel && \
