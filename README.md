@@ -161,7 +161,7 @@ See `requirements.txt`. Highlights:
 - **Time-series:** `statsmodels`, `arch`, `pykalman`
 - **Gradient boosting:** `xgboost`, `lightgbm`
 - **Dhan API:** `dhanhq`
-- **Visualisation / UI:** `matplotlib`, `mplfinance`, `gradio`
+- **Visualisation / UI:** `matplotlib`, `gradio`
 - **Data fallback:** `yfinance`
 
 ---

@@ -18,7 +18,6 @@ dhanhq>=1.0
 
 # Visualization
 matplotlib>=3.7
-mplfinance>=0.12
 
 # Data fetching fallback
 yfinance>=0.2
