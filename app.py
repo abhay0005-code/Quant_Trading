@@ -46,6 +46,17 @@ _DEFAULT_BROKER = os.environ.get("BROKER", "dhan").strip().lower()
 if _DEFAULT_BROKER not in BROKERS:
     _DEFAULT_BROKER = "dhan"
 
+
+def _broker_id(value) -> str:
+    """Safely normalise a broker value to a string id.
+
+    Gradio can deliver a dropdown value as a list (e.g. ``["dhan"]``) on
+    some ``change`` events, so we coerce before calling ``.strip()``.
+    """
+    if isinstance(value, (list, tuple)):
+        value = value[0] if value else ""
+    return str(value or "").strip().lower()
+
 # Stores the latest pipeline context so the LLM tab can re-analyse on demand.
 _latest_llm_ctx: dict = {}
 
@@ -87,15 +98,19 @@ def _build_config(broker, symbol, exchange, client_id, access_token, sandbox,
                   binance_testnet, tv_webhook, tv_symmap,
                   equity, risk_pct, max_loss, rr, train_window):
     return Config(
-        broker=(broker or "dhan").strip().lower(),
-        symbol=str(symbol).strip().upper(), exchange=exchange,
-        client_id=client_id.strip(), access_token=access_token.strip(),
+        broker=_broker_id(broker),
+        symbol=str(symbol).strip().upper(),
+        exchange=str(exchange or "").strip() or "NSE",
+        client_id=str(client_id or "").strip(),
+        access_token=str(access_token or "").strip(),
         sandbox=bool(sandbox),
-        kite_api_key=kite_key.strip(), kite_access_token=kite_token.strip(),
-        binance_api_key=binance_key.strip(),
-        binance_api_secret=binance_secret.strip(),
+        kite_api_key=str(kite_key or "").strip(),
+        kite_access_token=str(kite_token or "").strip(),
+        binance_api_key=str(binance_key or "").strip(),
+        binance_api_secret=str(binance_secret or "").strip(),
         binance_testnet=bool(binance_testnet),
-        tv_webhook_url=tv_webhook.strip(), tv_symbol_map=tv_symmap.strip(),
+        tv_webhook_url=str(tv_webhook or "").strip(),
+        tv_symbol_map=str(tv_symmap or "").strip(),
         account_equity=float(equity),
         risk_per_trade=float(risk_pct) / 100.0, max_risk_per_trade=float(max_loss),
         rr_ratio=float(rr), train_window=int(train_window))
@@ -120,7 +135,7 @@ def _client_for(cfg: Config) -> BrokerClient:
 
 def _broker_label(broker: str, sandbox: bool, client=None) -> str:
     """Human-readable status line for the active broker."""
-    b = (broker or "dhan").strip().lower()
+    b = _broker_id(broker) or "dhan"
     if b == "binance":
         mode = "TESTNET" if (client is None or client.testnet) else "LIVE"
         return f"BINANCE {mode}"
@@ -133,7 +148,7 @@ def _broker_label(broker: str, sandbox: bool, client=None) -> str:
 
 def update_broker_visibility(broker) -> list:
     """Show only the credential group matching the selected broker."""
-    b = (broker or "dhan").strip().lower()
+    b = _broker_id(broker) or "dhan"
     return [
         gr.Group(visible=(b == "dhan")),
         gr.Group(visible=(b == "zerodha")),
